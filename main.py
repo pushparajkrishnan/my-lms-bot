@@ -2,11 +2,15 @@ import os
 import json
 import random
 import re
-from datetime import datetime, date
+from datetime import date
 
 import pandas as pd
-from telegram import Poll
-from telegram.ext import ApplicationBuilder, CommandHandler
+from telegram import Poll, Update
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+)
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 import pytz
@@ -14,24 +18,23 @@ import pytz
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
+
 # =====================
-# CONFIG
+# CONFIG (FROM ENV)
 # =====================
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 YOUR_CHAT_ID = int(os.environ.get("YOUR_CHAT_ID"))
 GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID")
 GOOGLE_DOC_ID = os.environ.get("GOOGLE_DOC_ID")
 
-QUIZ_TIME = "20:00"
-CONCEPT_TIME = "20:05"
 QUIZ_COUNT = 5
-
 STATE_FILE = "state.json"
 
 IST = pytz.timezone("Asia/Kolkata")
 
+
 # =====================
-# CREDENTIALS FROM ENV
+# GOOGLE CREDS (ENV)
 # =====================
 GOOGLE_CREDENTIALS_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON")
 creds_info = json.loads(GOOGLE_CREDENTIALS_JSON)
@@ -39,7 +42,7 @@ creds = Credentials.from_service_account_info(creds_info)
 
 
 # =====================
-# Load or Init State
+# STATE MANAGEMENT
 # =====================
 def load_state():
     if os.path.exists(STATE_FILE):
@@ -57,7 +60,7 @@ def save_state(state):
 
 
 # =====================
-# GOOGLE SHEETS (QUIZ)
+# LOAD QUIZ DATA
 # =====================
 def load_quiz_data():
     service = build("sheets", "v4", credentials=creds)
@@ -73,12 +76,11 @@ def load_quiz_data():
         raise Exception("Google Sheet has no data.")
 
     df = pd.DataFrame(values[1:], columns=values[0])
-    df = df.rename(columns={'Word': 'Word', 'Meaning': 'Meaning'})
 
-    # Clean data
+    # Clean
     df = df.dropna(subset=["Word", "Meaning"])
-    df["Word"] = df["Word"].astype(str).strip()
-    df["Meaning"] = df["Meaning"].astype(str).strip()
+    df["Word"] = df["Word"].astype(str).str.strip()
+    df["Meaning"] = df["Meaning"].astype(str).str.strip()
     df = df[df["Word"] != ""]
     df = df[df["Meaning"] != ""]
     df = df.drop_duplicates(subset=["Meaning"])
@@ -106,8 +108,7 @@ def fetch_doc_text():
                 text = el.get("textRun", {}).get("content", "")
                 blocks.append(text)
 
-    full_text = "".join(blocks)
-    return full_text
+    return "".join(blocks)
 
 
 SEP_PATTERN = re.compile(r"^\s*-{3,}\s*$", re.MULTILINE)
@@ -118,21 +119,21 @@ def split_concepts(full_text):
     return [p.strip() for p in parts if p.strip()]
 
 
-# =====================
-# CONCEPT SCHEDULING
-# =====================
 def get_today_concept_index(n, start_date_iso):
     sd = date.fromisoformat(start_date_iso)
     today = date.today()
     days = (today - sd).days
+
     week = days // 7
     day_in_week = days % 7
+
     base = (week // 2) * 7
+
     return (base + day_in_week) % n
 
 
 # =====================
-# TELEGRAM HANDLERS
+# BOT HANDLERS
 # =====================
 async def send_quiz(app):
     bot = app.bot
@@ -143,8 +144,8 @@ async def send_quiz(app):
     sample = df.sample(min(QUIZ_COUNT, len(df)))
 
     for _, row in sample.iterrows():
-        word = row["Word"].strip()
-        correct = row["Meaning"].strip()
+        word = row["Word"]
+        correct = row["Meaning"]
 
         wrong_pool = df[df["Meaning"] != correct]["Meaning"].tolist()
         wrong_pool = list(set(wrong_pool))
@@ -168,6 +169,7 @@ async def send_quiz(app):
 async def send_concept(app):
     bot = app.bot
     state = load_state()
+
     full_text = fetch_doc_text()
     concepts = split_concepts(full_text)
 
@@ -177,20 +179,31 @@ async def send_concept(app):
     await bot.send_message(YOUR_CHAT_ID, f"🧠 Today’s Concept\n\n{concept}")
 
 
-async def start_cmd(update, context):
+# =====================
+# COMMAND HANDLERS
+# =====================
+async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Bot is active.\nQuiz at 8:00 PM\nConcept at 8:05 PM\n\nCommands:\n/quiz_now\n/concept_now"
+        "Bot is active.\n"
+        "Quiz: 8:00 PM\n"
+        "Concept: 8:05 PM\n\n"
+        "Commands:\n"
+        "/quiz_now\n"
+        "/concept_now"
     )
 
 
-async def quiz_now(update, context):
+async def quiz_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_quiz(context.application)
 
 
-async def concept_now(update, context):
+async def concept_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_concept(context.application)
 
 
+# =====================
+# MAIN
+# =====================
 def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
