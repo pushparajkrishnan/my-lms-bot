@@ -1,5 +1,5 @@
-python-telegram-bot==21.6
-pandas==2.1.4
+python-telegram-bot==20.7
+pandas==1.5.3
 google-api-python-client==2.147.0
 google-auth==2.35.0
 apscheduler==3.10.4
